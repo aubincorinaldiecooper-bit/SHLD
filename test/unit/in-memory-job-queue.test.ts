@@ -115,6 +115,45 @@ describe("InMemoryJobQueue", () => {
     expect(seen).toHaveLength(0);
   });
 
+  it("start() waits for a handler-chained enqueue to fully finish, even across real async gaps", async () => {
+    const queue = new InMemoryJobQueue();
+    const order: string[] = [];
+
+    queue.registerHandler("prepare_repository", async () => {
+      order.push("prepare_repository:start");
+      await new Promise((resolve) => setTimeout(resolve, 20)); // force a real async yield
+      order.push("prepare_repository:end");
+      await queue.enqueue({
+        jobType: "classify_change",
+        organizationId: "org_1",
+        idempotencyKey: "chain",
+        payload: {},
+      });
+    });
+    queue.registerHandler("classify_change", async () => {
+      order.push("classify_change:start");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      order.push("classify_change:end");
+    });
+
+    await queue.enqueue({
+      jobType: "prepare_repository",
+      organizationId: "org_1",
+      idempotencyKey: "chain",
+      payload: {},
+    });
+    await queue.start();
+
+    // If start() resolved before the chained job finished, "classify_change:end"
+    // would be missing here even though the test's own await already returned.
+    expect(order).toEqual([
+      "prepare_repository:start",
+      "prepare_repository:end",
+      "classify_change:start",
+      "classify_change:end",
+    ]);
+  });
+
   it("processes lower-priority-number jobs first", async () => {
     const queue = new InMemoryJobQueue();
     const order: string[] = [];

@@ -35,6 +35,12 @@ export class InMemoryJobQueue implements JobQueue {
   private jobs = new Map<string, InternalJob>();
   private handlers = new Map<JobType, JobHandler<unknown>>();
   private started = false;
+  // Tracks the single in-flight drain loop, if any, so a handler that
+  // enqueues a follow-up job (the self-chaining pattern every orchestration
+  // handler uses) extends the SAME awaited loop instead of spawning an
+  // orphaned, unawaited one — otherwise start() can resolve before chained
+  // jobs actually finish.
+  private drainPromise: Promise<void> | null = null;
 
   async enqueue<P>(params: EnqueueParams<P>): Promise<EnqueueResult> {
     const jobId = `${params.organizationId}:${params.jobType}:${params.idempotencyKey}`;
@@ -56,10 +62,20 @@ export class InMemoryJobQueue implements JobQueue {
     });
 
     if (this.started) {
-      void this.drain();
+      void this.ensureDraining();
     }
 
     return { jobId, deduplicated: false };
+  }
+
+  /** Starts the drain loop if none is running, and returns the (possibly shared) in-flight promise. */
+  private ensureDraining(): Promise<void> {
+    if (!this.drainPromise) {
+      this.drainPromise = this.drain().finally(() => {
+        this.drainPromise = null;
+      });
+    }
+    return this.drainPromise;
   }
 
   registerHandler<P>(jobType: JobType, handler: JobHandler<P>): void {
@@ -82,7 +98,7 @@ export class InMemoryJobQueue implements JobQueue {
 
   async start(_options?: StartOptions): Promise<void> {
     this.started = true;
-    await this.drain();
+    await this.ensureDraining();
   }
 
   async stop(): Promise<void> {
@@ -107,7 +123,7 @@ export class InMemoryJobQueue implements JobQueue {
     job.state = "waiting";
     job.attemptsMade = 0;
     if (this.started) {
-      await this.drain();
+      await this.ensureDraining();
     }
   }
 
