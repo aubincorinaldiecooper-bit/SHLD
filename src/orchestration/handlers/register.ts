@@ -4,6 +4,7 @@ import { createClassifyChangeHandler, createPrepareRepositoryHandler } from "./p
 import { createRunDeepSecHandler, createRunDeepSecRevalidationHandler } from "./run-deepsec.js";
 import { createRunStrixRetestHandler, createRunStrixValidationHandler } from "./run-strix.js";
 import { createApplyRoutingPolicyHandler, createGenerateReceiptHandler } from "./routing-and-receipt.js";
+import { createDeliverWebhookHandler } from "../../webhooks/deliver-webhook-handler.js";
 
 /**
  * Wires every job handler this platform actually enqueues onto a JobQueue.
@@ -13,9 +14,11 @@ import { createApplyRoutingPolicyHandler, createGenerateReceiptHandler } from ".
  * (DeepSecAdapter.run / StrixAdapter.run already return normalized data),
  * and correlation is performed inline by correlateStrixValidation — none
  * of the three is ever independently slow, retryable, or cancellable in a
- * way that would justify its own queue hop. wait_for_target and
- * deliver_webhook are registered by the deployment-webhook and outbound-
- * webhook integrations respectively, not here.
+ * way that would justify its own queue hop. wait_for_target has no
+ * registered handler in this beta (see the run-strix handler's
+ * assumedTargetBuildId note) — there is no deployment-webhook integration
+ * yet to make target readiness anything other than "provided at request
+ * time", so nothing ever enqueues that job type.
  */
 export function registerJobHandlers(jobQueue: JobQueue, deps: HandlerDeps): void {
   jobQueue.registerHandler("prepare_repository", createPrepareRepositoryHandler(deps));
@@ -27,4 +30,5 @@ export function registerJobHandlers(jobQueue: JobQueue, deps: HandlerDeps): void
   jobQueue.registerHandler("run_strix_validation", createRunStrixValidationHandler(deps));
   jobQueue.registerHandler("run_strix_retest", createRunStrixRetestHandler(deps));
   jobQueue.registerHandler("generate_receipt", createGenerateReceiptHandler(deps));
+  jobQueue.registerHandler("deliver_webhook", createDeliverWebhookHandler({ prisma: deps.prisma }));
 }

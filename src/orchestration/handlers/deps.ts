@@ -5,6 +5,8 @@ import type { StrixAdapter } from "../../adapters/strix/strix-adapter.js";
 import type { JobQueue } from "../job-queue.js";
 import { isRunTerminal } from "../../domain/run-state-machine.js";
 import { transitionRunStatus } from "../../domain/run-transitions.js";
+import { enqueueWebhookDelivery } from "../../webhooks/enqueue-delivery.js";
+import type { OutboundWebhookEventType } from "../../webhooks/outbound-events.js";
 
 export interface HandlerDeps {
   prisma: PrismaClient;
@@ -53,4 +55,20 @@ export async function finalizeRun(deps: HandlerDeps, runId: string): Promise<voi
     idempotencyKey: `${run.idempotencyKey}:receipt`,
     payload: { runId },
   });
+
+  // The run always finishes executing here, regardless of disposition —
+  // `security.run.completed` fires for completed/blocked/awaiting_fix
+  // alike; `security.review.blocked` is the additional, more specific
+  // signal for the one disposition that gates the change.
+  const eventTypes: OutboundWebhookEventType[] = ["security.run.completed"];
+  if (nextStatus === "blocked") eventTypes.push("security.review.blocked");
+
+  for (const eventType of eventTypes) {
+    await enqueueWebhookDelivery(deps.prisma, deps.jobQueue, {
+      organizationId: run.organizationId,
+      eventType,
+      payload: { run_id: runId, status: nextStatus },
+      idempotencyKey: `${runId}:${nextStatus}:${eventType}`,
+    });
+  }
 }
