@@ -29,7 +29,7 @@ export interface GetRunResult {
   classification: unknown;
   routingDecisions: unknown[];
   engineExecutions: unknown[];
-  findingCount: number;
+  findings: Array<{ id: string; title: string; severity: string; status: string; category: string }>;
   totalCostUsd: number;
   errors: string | null;
   nextAction: string;
@@ -54,7 +54,13 @@ export async function getRun(prisma: PrismaClient, agent: AuthenticatedAgent, ru
   assertSameOrganization(agent.organizationId, run.organizationId, "security run");
 
   const auditEvents = await prisma.auditEvent.findMany({ where: { runId }, select: { findingId: true } });
-  const findingCount = new Set(auditEvents.map((e) => e.findingId).filter(Boolean)).size;
+  const findingIds = [...new Set(auditEvents.map((e) => e.findingId).filter((id): id is string => Boolean(id)))];
+  const findings = findingIds.length
+    ? await prisma.finding.findMany({
+        where: { id: { in: findingIds } },
+        select: { id: true, title: true, severity: true, status: true, category: true },
+      })
+    : [];
   const totalCostUsd = run.engineExecutions.reduce((sum, e) => sum + Number(e.estimatedCostUsd ?? 0), 0);
 
   return {
@@ -68,7 +74,7 @@ export async function getRun(prisma: PrismaClient, agent: AuthenticatedAgent, ru
     classification: run.classification,
     routingDecisions: run.routingDecisions,
     engineExecutions: run.engineExecutions,
-    findingCount,
+    findings,
     totalCostUsd,
     errors: run.failureReason,
     nextAction: NEXT_ACTION_BY_STATUS[run.status] ?? "Unknown",
