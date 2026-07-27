@@ -21,6 +21,7 @@ function makeRunResult(status: StrixVerdict, overrides: Partial<StrixRunResult["
       evidenceSummary: "evidence",
       reproductionSteps: ["step 1"],
       proofOfConcept: status === "confirmed" ? "curl ..." : undefined,
+      codeLocations: [],
       ...overrides,
     },
     model: "strix-agent-v1",

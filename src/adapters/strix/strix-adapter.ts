@@ -1,5 +1,12 @@
 import { DomainError, TargetAuthorizationError } from "../../domain/errors.js";
-import { strixRawResultSchema, type StrixExecutionRequest, type StrixExecutionStrategy, type StrixVerdict } from "./types.js";
+import {
+  strixRawResultSchema,
+  type StrixCodeLocation,
+  type StrixExecutionRequest,
+  type StrixExecutionStrategy,
+  type StrixNewDiscovery,
+  type StrixVerdict,
+} from "./types.js";
 
 export class StrixExecutionError extends DomainError {}
 export class StrixTimeoutError extends DomainError {}
@@ -13,7 +20,9 @@ export interface NormalizedValidation {
   reproductionSteps: string[];
   proofOfConcept?: string;
   cvss?: number;
+  codeLocations: StrixCodeLocation[];
   agentReasoning?: string;
+  newDiscovery?: StrixNewDiscovery;
 }
 
 export interface StrixRunResult {
@@ -79,7 +88,9 @@ export class StrixAdapter {
       reproductionSteps: parsed.data.reproduction_steps ?? [],
       proofOfConcept: parsed.data.poc,
       cvss: parsed.data.cvss,
+      codeLocations: parsed.data.code_locations ?? [],
       agentReasoning: parsed.data.agent_reasoning,
+      newDiscovery: parsed.data.new_discovery,
     };
 
     return {

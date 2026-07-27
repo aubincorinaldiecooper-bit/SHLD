@@ -11,6 +11,14 @@ export interface PersistStrixRunParams {
   targetEnvironmentId: string;
   targetBuildId?: string;
   result: StrixRunResult;
+  /**
+   * Overrides the default verdict->status mapping. Pass explicit `null` to
+   * force "no transition" (e.g. a correlation-layer override for a build
+   * mismatch or an incomplete test). Omit to use the direct mapping.
+   */
+  overrideFindingStatus?: FindingStatus | null;
+  /** Recorded into the validation's evidence when the target build didn't match the intended commit. */
+  buildMismatch?: boolean;
 }
 
 export interface PersistStrixRunOutcome {
@@ -86,6 +94,10 @@ export async function persistStrixRun(
       },
     });
 
+    const evidenceSummary = params.buildMismatch
+      ? `[BUILD MISMATCH — target build did not match the intended commit] ${params.result.validation.evidenceSummary ?? ""}`.trim()
+      : params.result.validation.evidenceSummary;
+
     const validation = await tx.validation.create({
       data: {
         findingId: params.findingId,
@@ -95,13 +107,16 @@ export async function persistStrixRun(
         targetBuildId: params.targetBuildId,
         endpoint: params.result.validation.endpoint,
         method: params.result.validation.method,
-        evidenceSummary: params.result.validation.evidenceSummary,
+        evidenceSummary,
         proofArtifactId: pocArtifact?.id,
         validatedAt: new Date(),
       },
     });
 
-    const nextFindingStatus = VERDICT_TO_FINDING_STATUS[params.result.validation.status];
+    const nextFindingStatus =
+      params.overrideFindingStatus !== undefined
+        ? params.overrideFindingStatus
+        : VERDICT_TO_FINDING_STATUS[params.result.validation.status];
     if (nextFindingStatus) {
       await transitionFindingStatus(tx, {
         findingId: params.findingId,
@@ -113,6 +128,8 @@ export async function persistStrixRun(
           engine: "strix",
           evidenceSummary: params.result.validation.evidenceSummary,
           endpoint: params.result.validation.endpoint,
+          rawVerdict: params.result.validation.status,
+          buildMismatch: params.buildMismatch ?? false,
         },
       });
     }
