@@ -1,0 +1,9 @@
+process.env.DATABASE_URL ??= "postgresql://shld:shld_dev_password@localhost:5432/shld_test";
+process.env.REDIS_URL ??= "redis://localhost:6379/1";
+process.env.SESSION_SECRET ??= "test-session-secret";
+process.env.API_KEY_PEPPER ??= "test-api-key-pepper";
+process.env.WEBHOOK_SIGNING_SECRET ??= "test-webhook-secret";
+process.env.GITHUB_WEBHOOK_SECRET ??= "test-github-webhook-secret";
+process.env.ARTIFACT_STORAGE_DIR ??= "./.artifacts-test";
+process.env.DEEPSEC_EXECUTION_MODE ??= "mock";
+process.env.STRIX_EXECUTION_MODE ??= "mock";

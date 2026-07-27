@@ -1,0 +1,49 @@
+{
+  "name": "shld",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent-native security verification control plane (beta)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev:api": "tsx watch apps/api/main.ts",
+    "dev:worker": "tsx watch apps/worker/main.ts",
+    "dev:mcp": "tsx apps/mcp/main.ts",
+    "start:api": "node dist/apps/api/main.js",
+    "start:worker": "node dist/apps/worker/main.js",
+    "start:mcp": "node dist/apps/mcp/main.js",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:watch": "vitest",
+    "lint": "eslint src test apps --ext .ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^9.4.0",
+    "@fastify/rate-limit": "^9.1.0",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@prisma/client": "^5.22.0",
+    "bullmq": "^5.34.0",
+    "fastify": "^4.28.1",
+    "ioredis": "^5.4.1",
+    "pino": "^9.5.0",
+    "simple-git": "^3.27.0",
+    "undici": "^6.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

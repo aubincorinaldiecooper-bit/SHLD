@@ -1,0 +1,665 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users              User[]
+  agentIdentities    AgentIdentity[]
+  repositories       Repository[]
+  targetEnvironments TargetEnvironment[]
+  securityRuns       SecurityRun[]
+  findings           Finding[]
+  artifacts          Artifact[]
+  auditEvents        AuditEvent[]
+  webhookEndpoints   WebhookEndpoint[]
+  idempotencyRecords IdempotencyRecord[]
+
+  @@map("organizations")
+}
+
+enum UserRole {
+  owner
+  admin
+  member
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  email          String
+  role           UserRole @default(member)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  sessions     Session[]
+
+  @@unique([organizationId, email])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Agent identity & credentials
+// ---------------------------------------------------------------------------
+
+enum AgentType {
+  mcp
+  api
+  github
+  internal
+}
+
+// Structured shape (validated by zod, not enforced by the DB) stored in
+// AgentIdentity.permissions:
+//   {
+//     repositoryIds: string[] | "all",
+//     operations: string[],                 // e.g. ["change_review", "validate_finding"]
+//     targetEnvironmentIds: string[] | "all",
+//     maxRunBudgetUsd: number,
+//     maxConcurrentRuns: number
+//   }
+// There is no "allow production targets" flag: TargetEnvironmentType has no
+// `production` value, so a production target cannot be created or
+// authorized through this schema at all — the restriction is structural,
+// not a permission an agent could ever be granted.
+model AgentIdentity {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  name           String
+  type           AgentType
+  credentialId   String?   @map("credential_id")
+  permissions    Json
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+
+  organization  Organization      @relation(fields: [organizationId], references: [id])
+  apiKeys       ApiKeyCredential[]
+  securityRuns  SecurityRun[]
+
+  @@map("agent_identities")
+}
+
+// Opaque bearer tokens are hashed at rest; only a short prefix is retained
+// for display/lookup purposes. The raw key is shown to the user exactly once.
+model ApiKeyCredential {
+  id              String    @id @default(cuid())
+  agentIdentityId String    @map("agent_identity_id")
+  keyPrefix       String    @map("key_prefix")
+  keyHash         String    @unique @map("key_hash")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  revokedAt       DateTime? @map("revoked_at")
+
+  agentIdentity AgentIdentity @relation(fields: [agentIdentityId], references: [id])
+
+  @@index([agentIdentityId])
+  @@map("api_key_credentials")
+}
+
+// ---------------------------------------------------------------------------
+// Repositories & targets
+// ---------------------------------------------------------------------------
+
+enum RepositoryProvider {
+  github
+}
+
+enum RepositoryStatus {
+  pending
+  active
+  suspended
+}
+
+model Repository {
+  id             String             @id @default(cuid())
+  organizationId String             @map("organization_id")
+  provider       RepositoryProvider @default(github)
+  owner          String
+  name           String
+  defaultBranch  String             @map("default_branch")
+  installationId String?            @map("installation_id")
+  status         RepositoryStatus   @default(pending)
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  organization       Organization         @relation(fields: [organizationId], references: [id])
+  targetEnvironments TargetEnvironment[]
+  securityRuns       SecurityRun[]
+  findings           Finding[]
+  policyConfig       RepositoryPolicyConfig?
+
+  @@unique([organizationId, owner, name])
+  @@map("repositories")
+}
+
+// Per-repository overrides for the classifier and routing policy.
+model RepositoryPolicyConfig {
+  id                       String   @id @default(cuid())
+  repositoryId             String   @unique @map("repository_id")
+  policyVersion            String   @default("2026-01-01") @map("policy_version")
+  sensitivePathPatterns    String[] @map("sensitive_path_patterns")
+  productionTestingAllowed Boolean  @default(false) @map("production_testing_allowed")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  repository Repository @relation(fields: [repositoryId], references: [id])
+
+  @@map("repository_policy_configs")
+}
+
+enum TargetEnvironmentType {
+  preview
+  staging
+  test
+}
+
+enum TargetAuthorizationStatus {
+  pending
+  authorized
+  expired
+  revoked
+}
+
+model TargetEnvironment {
+  id                        String                    @id @default(cuid())
+  organizationId            String                    @map("organization_id")
+  repositoryId              String                    @map("repository_id")
+  name                      String
+  baseUrl                   String                    @map("base_url")
+  environmentType           TargetEnvironmentType     @map("environment_type")
+  authorizationStatus       TargetAuthorizationStatus @default(pending) @map("authorization_status")
+  allowedPaths              String[]                  @map("allowed_paths")
+  excludedPaths             String[]                  @map("excluded_paths")
+  maximumRequests           Int                       @map("maximum_requests")
+  maximumConcurrency        Int                       @map("maximum_concurrency")
+  destructiveTestingAllowed Boolean                   @default(false) @map("destructive_testing_allowed")
+  authorizationExpiresAt    DateTime?                 @map("authorization_expires_at")
+  createdAt                 DateTime                  @default(now()) @map("created_at")
+  updatedAt                 DateTime                  @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  repository   Repository   @relation(fields: [repositoryId], references: [id])
+  securityRuns SecurityRun[]
+  validations  Validation[]
+
+  @@map("target_environments")
+}
+
+// ---------------------------------------------------------------------------
+// Security runs & engine executions
+// ---------------------------------------------------------------------------
+
+enum SecurityRunType {
+  change_review
+  repository_scan
+  finding_validation
+  fix_verification
+}
+
+enum SecurityRunStatus {
+  queued
+  classifying
+  source_review_running
+  source_review_completed
+  validation_waiting_for_target
+  validation_running
+  awaiting_fix
+  fix_verification_running
+  completed
+  blocked
+  failed
+  cancelled
+}
+
+model SecurityRun {
+  id                   String            @id @default(cuid())
+  organizationId       String            @map("organization_id")
+  repositoryId         String            @map("repository_id")
+  requestedByAgentId   String            @map("requested_by_agent_id")
+  runType              SecurityRunType   @map("run_type")
+  status               SecurityRunStatus @default(queued)
+  baseSha              String            @map("base_sha")
+  headSha              String            @map("head_sha")
+  pullRequestNumber    Int?              @map("pull_request_number")
+  targetEnvironmentId  String?           @map("target_environment_id")
+  policyVersion        String            @map("policy_version")
+  idempotencyKey       String            @unique @map("idempotency_key")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  startedAt            DateTime?         @map("started_at")
+  completedAt          DateTime?         @map("completed_at")
+  failureReason        String?           @map("failure_reason")
+
+  organization      Organization       @relation(fields: [organizationId], references: [id])
+  repository        Repository         @relation(fields: [repositoryId], references: [id])
+  requestedByAgent  AgentIdentity      @relation(fields: [requestedByAgentId], references: [id])
+  targetEnvironment TargetEnvironment? @relation(fields: [targetEnvironmentId], references: [id])
+
+  engineExecutions EngineExecution[]
+  auditEvents      AuditEvent[]
+  routingDecisions RoutingDecision[]
+  artifacts        Artifact[]
+  receipt          Receipt?
+  classification   RunClassification?
+
+  @@index([organizationId, repositoryId])
+  @@map("security_runs")
+}
+
+// Persisted output of the deterministic change classifier for a run.
+model RunClassification {
+  id                   String   @id @default(cuid())
+  runId                String   @unique @map("run_id")
+  riskLevel            String   @map("risk_level")
+  securitySensitive    Boolean  @map("security_sensitive")
+  categories           String[]
+  recommendedReview    String   @map("recommended_review")
+  requiresPreviewTarget Boolean @map("requires_preview_target")
+  reasons              String[]
+  changedFiles         String[] @map("changed_files")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  run SecurityRun @relation(fields: [runId], references: [id])
+
+  @@map("run_classifications")
+}
+
+enum Engine {
+  deepsec
+  strix
+}
+
+enum EngineExecutionStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+  timed_out
+}
+
+model EngineExecution {
+  id                String                @id @default(cuid())
+  runId             String                @map("run_id")
+  engine            Engine
+  operation         String
+  status            EngineExecutionStatus @default(queued)
+  inputArtifactId   String?               @map("input_artifact_id")
+  outputArtifactId  String?               @map("output_artifact_id")
+  engineVersion     String?               @map("engine_version")
+  startedAt         DateTime?             @map("started_at")
+  completedAt       DateTime?             @map("completed_at")
+  exitCode          Int?                  @map("exit_code")
+  estimatedCostUsd  Decimal?              @map("estimated_cost_usd") @db.Decimal(10, 4)
+  inputTokens       Int?                  @map("input_tokens")
+  outputTokens      Int?                  @map("output_tokens")
+  failureReason     String?               @map("failure_reason")
+
+  run         SecurityRun  @relation(fields: [runId], references: [id])
+  inputArtifact  Artifact? @relation("EngineExecutionInputArtifact", fields: [inputArtifactId], references: [id])
+  outputArtifact Artifact? @relation("EngineExecutionOutputArtifact", fields: [outputArtifactId], references: [id])
+  validations Validation[]
+
+  @@index([runId])
+  @@map("engine_executions")
+}
+
+// Snapshot of a routing-policy decision for a run/finding pair.
+model RoutingDecision {
+  id            String   @id @default(cuid())
+  runId         String   @map("run_id")
+  findingId     String?  @map("finding_id")
+  policyVersion String   @map("policy_version")
+  inputs        Json
+  escalate      Boolean
+  reason        String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  run     SecurityRun @relation(fields: [runId], references: [id])
+  finding Finding?    @relation(fields: [findingId], references: [id])
+
+  @@index([runId])
+  @@index([findingId])
+  @@map("routing_decisions")
+}
+
+// ---------------------------------------------------------------------------
+// Findings
+// ---------------------------------------------------------------------------
+
+enum FindingSeverity {
+  critical
+  high
+  medium
+  low
+  info
+}
+
+enum FindingConfidence {
+  high
+  medium
+  low
+}
+
+enum FindingStatus {
+  suspected
+  source_confirmed
+  validation_queued
+  confirmed
+  not_reproduced
+  inconclusive
+  fix_pending
+  fix_submitted
+  retesting
+  verified_fixed
+  still_exploitable
+  accepted_risk
+  dismissed
+}
+
+enum DiscoveryEngine {
+  deepsec
+  strix
+}
+
+enum FindingClass {
+  source
+  dynamic
+}
+
+model Finding {
+  id               String            @id @default(cuid())
+  organizationId   String            @map("organization_id")
+  repositoryId     String            @map("repository_id")
+  fingerprint      String            @map("fingerprint")
+  title            String
+  description      String
+  category         String
+  cwe              String?
+  severity         FindingSeverity
+  confidence       FindingConfidence
+  status           FindingStatus     @default(suspected)
+  discoveryEngine  DiscoveryEngine   @default(deepsec) @map("discovery_engine")
+  findingClass     FindingClass      @default(source) @map("finding_class")
+  firstSeenCommit  String            @map("first_seen_commit")
+  lastSeenCommit   String            @map("last_seen_commit")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  organization    Organization           @relation(fields: [organizationId], references: [id])
+  repository      Repository             @relation(fields: [repositoryId], references: [id])
+  sourceLocations FindingSourceLocation[]
+  validations     Validation[]
+  remediation     Remediation?
+  routingDecisions RoutingDecision[]
+  auditEvents     AuditEvent[]
+
+  @@unique([repositoryId, fingerprint])
+  @@map("findings")
+}
+
+model FindingSourceLocation {
+  id        String  @id @default(cuid())
+  findingId String  @map("finding_id")
+  filePath  String  @map("file_path")
+  startLine Int?    @map("start_line")
+  endLine   Int?    @map("end_line")
+  commitSha String  @map("commit_sha")
+  symbol    String?
+
+  finding Finding @relation(fields: [findingId], references: [id])
+
+  @@index([findingId])
+  @@map("finding_source_locations")
+}
+
+enum ValidationStatus {
+  pending
+  confirmed
+  not_reproduced
+  inconclusive
+  not_applicable
+  failed
+}
+
+model Validation {
+  id                  String           @id @default(cuid())
+  findingId           String           @map("finding_id")
+  engineExecutionId   String           @map("engine_execution_id")
+  status              ValidationStatus @default(pending)
+  targetEnvironmentId String?          @map("target_environment_id")
+  targetBuildId       String?          @map("target_build_id")
+  endpoint            String?
+  method              String?
+  evidenceSummary     String?          @map("evidence_summary")
+  proofArtifactId     String?          @map("proof_artifact_id")
+  validatedAt         DateTime?        @map("validated_at")
+
+  finding           Finding           @relation(fields: [findingId], references: [id])
+  engineExecution   EngineExecution   @relation(fields: [engineExecutionId], references: [id])
+  targetEnvironment TargetEnvironment? @relation(fields: [targetEnvironmentId], references: [id])
+  proofArtifact     Artifact?         @relation(fields: [proofArtifactId], references: [id])
+
+  @@index([findingId])
+  @@map("validations")
+}
+
+enum RemediationOutcome {
+  pending
+  passed
+  failed
+  not_applicable
+  inconclusive
+}
+
+enum RemediationFinalStatus {
+  pending
+  verified_fixed
+  still_exploitable
+  partially_fixed
+  inconclusive
+  verification_failed
+}
+
+model Remediation {
+  id                        String                  @id @default(cuid())
+  findingId                 String                  @unique @map("finding_id")
+  fixCommitSha              String                  @map("fix_commit_sha")
+  sourceRevalidationStatus  RemediationOutcome       @default(pending) @map("source_revalidation_status")
+  runtimeRetestStatus       RemediationOutcome       @default(pending) @map("runtime_retest_status")
+  regressionTestStatus      RemediationOutcome       @default(not_applicable) @map("regression_test_status")
+  finalStatus               RemediationFinalStatus  @default(pending) @map("final_status")
+  createdAt                 DateTime                @default(now()) @map("created_at")
+  updatedAt                 DateTime                @updatedAt @map("updated_at")
+
+  finding Finding @relation(fields: [findingId], references: [id])
+
+  @@map("remediations")
+}
+
+// ---------------------------------------------------------------------------
+// Artifacts, receipts, audit
+// ---------------------------------------------------------------------------
+
+enum ArtifactType {
+  source_snapshot
+  deepsec_raw_output
+  deepsec_config
+  strix_raw_output
+  strix_instruction
+  proof_of_concept
+  receipt_json
+  receipt_markdown
+  other
+}
+
+model Artifact {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  runId          String?      @map("run_id")
+  type           ArtifactType
+  storageLocation String      @map("storage_location")
+  contentHash    String       @map("content_hash")
+  metadata       Json?
+  createdAt      DateTime     @default(now()) @map("created_at")
+  expiresAt      DateTime?    @map("expires_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  run          SecurityRun? @relation(fields: [runId], references: [id])
+
+  engineExecutionInputs  EngineExecution[] @relation("EngineExecutionInputArtifact")
+  engineExecutionOutputs EngineExecution[] @relation("EngineExecutionOutputArtifact")
+  validationProofs       Validation[]
+
+  @@index([organizationId, runId])
+  @@map("artifacts")
+}
+
+enum ReceiptStatus {
+  passed
+  passed_with_findings
+  blocked
+  awaiting_fix
+  inconclusive
+  failed
+}
+
+model Receipt {
+  id               String        @id @default(cuid())
+  runId            String        @unique @map("run_id")
+  status           ReceiptStatus
+  jsonArtifactId   String?       @map("json_artifact_id")
+  markdownArtifactId String?     @map("markdown_artifact_id")
+  generatedAt      DateTime      @default(now()) @map("generated_at")
+
+  run SecurityRun @relation(fields: [runId], references: [id])
+
+  @@map("receipts")
+}
+
+enum ActorType {
+  agent
+  user
+  system
+  github
+}
+
+model AuditEvent {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  runId          String?   @map("run_id")
+  findingId      String?   @map("finding_id")
+  actorType      ActorType @map("actor_type")
+  actorId        String?   @map("actor_id")
+  eventType      String    @map("event_type")
+  previousState  String?   @map("previous_state")
+  newState       String?   @map("new_state")
+  metadata       Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  run          SecurityRun? @relation(fields: [runId], references: [id])
+  finding      Finding?     @relation(fields: [findingId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([runId])
+  @@index([findingId])
+  @@map("audit_events")
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency & webhooks
+// ---------------------------------------------------------------------------
+
+model IdempotencyRecord {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  endpoint       String
+  idempotencyKey String   @map("idempotency_key")
+  requestHash    String   @map("request_hash")
+  responseStatus Int      @map("response_status")
+  responseBody   Json
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, endpoint, idempotencyKey])
+  @@map("idempotency_records")
+}
+
+model WebhookEndpoint {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  url            String
+  secret         String
+  eventTypes     String[] @map("event_types")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  deliveries   WebhookDelivery[]
+
+  @@map("webhook_endpoints")
+}
+
+enum WebhookDeliveryStatus {
+  pending
+  delivered
+  failed
+  exhausted
+}
+
+model WebhookDelivery {
+  id                String                @id @default(cuid())
+  webhookEndpointId String                @map("webhook_endpoint_id")
+  eventType         String                @map("event_type")
+  idempotencyKey    String                @map("idempotency_key")
+  payload           Json
+  status            WebhookDeliveryStatus @default(pending)
+  attempts          Int                   @default(0)
+  lastAttemptAt     DateTime?             @map("last_attempt_at")
+  responseCode      Int?                  @map("response_code")
+  createdAt         DateTime              @default(now()) @map("created_at")
+
+  webhookEndpoint WebhookEndpoint @relation(fields: [webhookEndpointId], references: [id])
+
+  @@unique([webhookEndpointId, idempotencyKey])
+  @@map("webhook_deliveries")
+}
+
+// Deduplicates inbound GitHub webhook deliveries by their unique delivery id.
+model InboundGithubEvent {
+  id          String   @id @default(cuid())
+  deliveryId  String   @unique @map("delivery_id")
+  eventType   String   @map("event_type")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("inbound_github_events")
+}
