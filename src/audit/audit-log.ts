@@ -35,7 +35,7 @@ export async function recordAuditEvent(
       eventType: params.eventType,
       previousState: params.previousState ?? null,
       newState: params.newState ?? null,
-      metadata: params.metadata ?? undefined,
+      metadata: (params.metadata as Prisma.InputJsonValue) ?? undefined,
     },
   });
 }

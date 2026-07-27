@@ -1,5 +1,5 @@
 import { Queue, Worker, type Job } from "bullmq";
-import IORedis from "ioredis";
+import { Redis } from "ioredis";
 import type {
   DeadLetterJob,
   EnqueueParams,
@@ -36,7 +36,7 @@ interface JobData {
  * Redis connections and observability in one place instead of 14 queues.
  */
 export class BullMqJobQueue implements JobQueue {
-  private readonly connection: IORedis;
+  private readonly connection: Redis;
   private readonly queue: Queue<JobData>;
   private readonly queueName: string;
   private readonly limiter: TenantConcurrencyLimiter;
@@ -44,7 +44,7 @@ export class BullMqJobQueue implements JobQueue {
   private worker: Worker<JobData> | undefined;
 
   constructor(options: BullMqJobQueueOptions) {
-    this.connection = new IORedis(options.redisUrl, { maxRetriesPerRequest: null });
+    this.connection = new Redis(options.redisUrl, { maxRetriesPerRequest: null });
     this.queueName = options.queueName ?? "shld-jobs";
     this.queue = new Queue<JobData>(this.queueName, { connection: this.connection });
     this.limiter = new TenantConcurrencyLimiter(
@@ -162,7 +162,7 @@ export class BullMqJobQueue implements JobQueue {
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
     const pollHandle = setInterval(() => {
-      void this.connection.get(this.cancelKey(job.id!)).then((flag) => {
+      void this.connection.get(this.cancelKey(job.id!)).then((flag: string | null) => {
         if (flag) controller.abort(new Error("cancelled"));
       });
     }, CANCEL_POLL_INTERVAL_MS);

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import simpleGit, { type SimpleGit } from "simple-git";
+import { simpleGit, type SimpleGit } from "simple-git";
 import { DomainError } from "../domain/errors.js";
 import { findSensitivePaths } from "../policy/sensitive-patterns.js";
 import { detectFrameworksFromManifest, detectLanguagesFromPaths } from "./language-detection.js";
