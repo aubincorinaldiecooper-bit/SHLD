@@ -1,6 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import type { AuthenticatedAgent } from "../../auth/authenticate-agent.js";
-import { assertSameOrganization } from "../../auth/tenant-isolation.js";
+import { assertSameOrganization, type TenantPrincipal } from "../../auth/tenant-isolation.js";
 import { NotFoundError } from "../../domain/errors.js";
 
 const NEXT_ACTION_BY_STATUS: Record<string, string> = {
@@ -39,7 +38,7 @@ export interface GetRunResult {
 }
 
 /** Get Run (GET /v1/security/runs/{run_id}). */
-export async function getRun(prisma: PrismaClient, agent: AuthenticatedAgent, runId: string): Promise<GetRunResult> {
+export async function getRun(prisma: PrismaClient, principal: TenantPrincipal, runId: string): Promise<GetRunResult> {
   const run = await prisma.securityRun.findUnique({
     where: { id: runId },
     include: {
@@ -51,7 +50,7 @@ export async function getRun(prisma: PrismaClient, agent: AuthenticatedAgent, ru
     },
   });
   if (!run) throw new NotFoundError(`Security run ${runId} not found`);
-  assertSameOrganization(agent.organizationId, run.organizationId, "security run");
+  assertSameOrganization(principal.organizationId, run.organizationId, "security run");
 
   const auditEvents = await prisma.auditEvent.findMany({ where: { runId }, select: { findingId: true } });
   const findingIds = [...new Set(auditEvents.map((e) => e.findingId).filter((id): id is string => Boolean(id)))];

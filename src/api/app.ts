@@ -7,6 +7,8 @@ import { rawBodyPlugin } from "./raw-body-plugin.js";
 import { apiErrorHandler } from "./error-handler.js";
 import { registerSecurityRoutes } from "./routes/security-routes.js";
 import { registerGitHubWebhookRoute } from "./routes/github-webhook-route.js";
+import { dashboardSessionAuthPlugin } from "../dashboard/session-auth-plugin.js";
+import { registerDashboardRoutes } from "../dashboard/routes.js";
 
 export interface BuildAppOptions {
   prisma: PrismaClient;
@@ -15,6 +17,8 @@ export interface BuildAppOptions {
   logger?: boolean;
   /** Omit to leave the GitHub webhook route unregistered (e.g. in tests that don't need it). */
   githubWebhookSecret?: string;
+  /** Defaults to true — set false to leave the dashboard unregistered. */
+  enableDashboard?: boolean;
 }
 
 /** Builds the canonical API. MCP, GitHub integrations, and the dashboard all call the same services this exposes. */
@@ -37,6 +41,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       jobQueue: options.jobQueue,
       webhookSecret: options.githubWebhookSecret,
     });
+  }
+
+  if (options.enableDashboard ?? true) {
+    await fastify.register(dashboardSessionAuthPlugin, { prisma: options.prisma });
+    registerDashboardRoutes(fastify, { prisma: options.prisma });
   }
 
   fastify.get("/healthz", async () => ({ status: "ok" }));

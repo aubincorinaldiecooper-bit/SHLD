@@ -1,7 +1,7 @@
 import type { Finding, PrismaClient } from "@prisma/client";
 import type { AuthenticatedAgent } from "../../auth/authenticate-agent.js";
 import { assertOperationAllowed } from "../../auth/permissions.js";
-import { assertSameOrganization } from "../../auth/tenant-isolation.js";
+import { assertSameOrganization, type TenantPrincipal } from "../../auth/tenant-isolation.js";
 import { authorizeTargetEnvironment } from "../../authz/target-authorization.js";
 import { NotFoundError } from "../../domain/errors.js";
 import type { JobQueue } from "../../orchestration/job-queue.js";
@@ -18,10 +18,10 @@ async function loadOwnedFinding(prisma: PrismaClient, agent: AuthenticatedAgent,
 }
 
 /** List Run Findings (GET /v1/security/runs/{run_id}/findings). */
-export async function listRunFindings(prisma: PrismaClient, agent: AuthenticatedAgent, runId: string) {
+export async function listRunFindings(prisma: PrismaClient, principal: TenantPrincipal, runId: string) {
   const run = await prisma.securityRun.findUnique({ where: { id: runId } });
   if (!run) throw new NotFoundError(`Security run ${runId} not found`);
-  assertSameOrganization(agent.organizationId, run.organizationId, "security run");
+  assertSameOrganization(principal.organizationId, run.organizationId, "security run");
 
   const auditEvents = await prisma.auditEvent.findMany({ where: { runId }, select: { findingId: true } });
   const findingIds = [...new Set(auditEvents.map((e) => e.findingId).filter((id): id is string => Boolean(id)))];
@@ -33,13 +33,13 @@ export async function listRunFindings(prisma: PrismaClient, agent: Authenticated
 }
 
 /** Get Finding (GET /v1/security/findings/{finding_id}). */
-export async function getFinding(prisma: PrismaClient, agent: AuthenticatedAgent, findingId: string) {
+export async function getFinding(prisma: PrismaClient, principal: TenantPrincipal, findingId: string) {
   const finding = await prisma.finding.findUnique({
     where: { id: findingId },
     include: { sourceLocations: true, validations: true, remediation: true },
   });
   if (!finding) throw new NotFoundError(`Finding ${findingId} not found`);
-  assertSameOrganization(agent.organizationId, finding.organizationId, "finding");
+  assertSameOrganization(principal.organizationId, finding.organizationId, "finding");
   return finding;
 }
 
