@@ -8,7 +8,13 @@ async function main(): Promise<void> {
   const artifactStore = new ArtifactStore(process.env.ARTIFACT_STORAGE_DIR ?? "./.artifacts");
   const jobQueue = new BullMqJobQueue({ redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379" });
 
-  const app = await buildApp({ prisma, jobQueue, artifactStore, logger: true });
+  const app = await buildApp({
+    prisma,
+    jobQueue,
+    artifactStore,
+    logger: true,
+    githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+  });
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen({ port, host: "0.0.0.0" });
