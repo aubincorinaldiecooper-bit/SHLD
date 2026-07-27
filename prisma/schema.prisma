@@ -201,6 +201,13 @@ model TargetEnvironment {
   maximumConcurrency        Int                       @map("maximum_concurrency")
   destructiveTestingAllowed Boolean                   @default(false) @map("destructive_testing_allowed")
   authorizationExpiresAt    DateTime?                 @map("authorization_expires_at")
+  // Rules of Engagement (spec) requires "Allowed test accounts" per target,
+  // which the Domain Model's field list omits — filled in here rather than
+  // accepting agent-supplied credentials per mission. Structured as
+  // [{ label, username, credentialRef }]; credentialRef is an opaque
+  // reference resolved to a real secret only inside the disposable Strix
+  // sandbox, never logged or returned raw via the API.
+  testAccounts              Json                      @default("[]") @map("test_accounts")
   createdAt                 DateTime                  @default(now()) @map("created_at")
   updatedAt                 DateTime                  @updatedAt @map("updated_at")
 
